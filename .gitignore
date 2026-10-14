@@ -1,0 +1,23 @@
+# ---- model weights: never commit these ----
+*.safetensors
+*.gguf
+*.onnx
+*.pth
+*.pt
+*.ckpt
+*.msgpack
+models/
+hf-cache/
+.cache/
+
+# ---- environment ----
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# ---- heavy downloaded data (regenerate with pipeline/build_dataset.py) ----
+data/thumbs/
+data/atlas*.bin
+data/tsne.bin

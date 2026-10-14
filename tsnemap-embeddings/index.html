@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Embedding Atlas — EmbeddingGemma 2 × t-SNE Map</title>
+<style>
+  :root { --bg:#0b0d10; --panel:#14171cee; --line:#2a2f38; --txt:#e8eaf0; --dim:#9aa3b2; --acc:#8ab4ff; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; overflow:hidden; background:var(--bg); color:var(--txt);
+    font:13px/1.45 -apple-system, "SF Pro Text", Inter, Segoe UI, sans-serif; }
+  #map { position:fixed; inset:0; display:block; cursor:grab; }
+  #glcv { position:fixed; inset:0; display:none; cursor:grab; }
+  body.gl #glcv { display:block; }
+  body.gl #map { display:none; }
+  #map.dragging, #glcv.dragging { cursor:grabbing; }
+
+  header { position:fixed; top:14px; left:16px; right:16px; z-index:10; display:flex;
+    gap:10px; align-items:flex-start; pointer-events:none; flex-wrap:wrap; }
+  .brand { pointer-events:auto; background:var(--panel); border:1px solid var(--line);
+    border-radius:10px; padding:9px 13px; backdrop-filter:blur(10px); }
+  .brand h1 { font-size:13px; font-weight:600; letter-spacing:.2px; }
+  .brand .sub { color:var(--dim); font-size:11px; margin-top:1px; }
+  .brand .sub b { color:#c9d4e8; }
+  .controls { pointer-events:auto; display:flex; gap:8px; margin-left:auto; flex-wrap:wrap; }
+  .seg { display:flex; background:var(--panel); border:1px solid var(--line); border-radius:9px;
+    overflow:hidden; backdrop-filter:blur(10px); }
+  .seg button { appearance:none; border:0; background:transparent; color:var(--dim); padding:8px 13px;
+    font:inherit; font-size:12px; cursor:pointer; white-space:nowrap; }
+  .seg button.on { background:#232a36; color:var(--txt); }
+  .seg button:hover { color:var(--txt); }
+  .btn3d { appearance:none; border:1px solid var(--line); background:var(--panel); color:var(--txt);
+    border-radius:9px; padding:8px 13px; font:inherit; font-size:12px; cursor:pointer;
+    backdrop-filter:blur(10px); }
+  .btn3d.on { background:#3a2f1e; border-color:#6b5426; }
+
+  #tip { position:fixed; z-index:20; pointer-events:none; background:var(--panel);
+    border:1px solid var(--line); border-radius:10px; padding:8px; width:230px;
+    backdrop-filter:blur(12px); display:none; box-shadow:0 8px 30px #0009; }
+  #tip .th { width:100%; height:150px; object-fit:cover; border-radius:6px; display:block; background:#000; }
+  #tip .tt { font-weight:600; margin-top:6px; font-size:12px; }
+  #tip .tm { color:var(--dim); font-size:11px; margin-top:1px; }
+  #tip .chips { margin-top:6px; display:flex; gap:4px; flex-wrap:wrap; }
+  .chip { font-size:10px; color:var(--acc); background:#8ab4ff1c; border:1px solid #8ab4ff3a;
+    padding:2px 7px; border-radius:20px; }
+
+  #panel { position:fixed; z-index:15; top:0; right:0; bottom:0; width:340px;
+    background:var(--panel); border-left:1px solid var(--line); backdrop-filter:blur(16px);
+    transform:translateX(102%); transition:transform .28s cubic-bezier(.2,.8,.2,1); overflow-y:auto; }
+  #panel.open { transform:none; }
+  #panel .inner { padding:18px; }
+  #panel .close { position:absolute; top:12px; right:12px; width:28px; height:28px; border-radius:8px;
+    border:1px solid var(--line); background:#ffffff10; color:var(--txt); cursor:pointer; font-size:14px; }
+  #panel img.hero { width:100%; border-radius:10px; display:block; background:#000; min-height:120px; }
+  #panel h2 { font-size:15px; margin-top:12px; }
+  #panel .meta { color:var(--dim); font-size:12px; margin-top:2px; }
+  #panel .sec { margin-top:16px; font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); }
+  #panel .chips { margin-top:8px; display:flex; gap:5px; flex-wrap:wrap; }
+  #panel .chip { font-size:11px; padding:3px 9px; cursor:pointer; }
+  #panel .sim { display:flex; gap:8px; margin-top:8px; cursor:pointer; align-items:center; }
+  #panel .sim img { width:44px; height:44px; object-fit:cover; border-radius:6px; background:#000; }
+  #panel .sim .st { font-size:11px; color:var(--txt); flex:1; }
+  #panel .sim .st em { color:var(--dim); font-style:normal; display:block; font-size:10px; }
+  #panel a.plain { color:var(--acc); font-size:12px; text-decoration:none; display:block; margin-top:4px; }
+
+  #searchbox { pointer-events:auto; background:var(--panel); border:1px solid var(--line); border-radius:9px;
+    padding:8px 12px; color:var(--txt); font:inherit; font-size:12px; width:210px; backdrop-filter:blur(10px); }
+  #searchbox::placeholder { color:#67707f; }
+  #searchbox:focus { outline:1px solid #8ab4ff66; }
+  .hint { position:fixed; bottom:14px; left:16px; z-index:9; color:#6b7484; font-size:11px; background:var(--panel);
+    border:1px solid var(--line); border-radius:8px; padding:7px 11px; backdrop-filter:blur(10px); }
+  .hint b { color:var(--dim); font-weight:600; }
+  #loader { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:50;
+    background:var(--bg); color:var(--dim); font-size:13px; transition:opacity .5s; flex-direction:column; gap:12px; }
+  #loader .ring { width:26px; height:26px; border:2px solid #333c4a; border-top-color:var(--acc);
+    border-radius:50%; animation:spin 0.9s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #matchbar { position:fixed; z-index:9; bottom:14px; right:16px; display:none; gap:6px; background:var(--panel);
+    border:1px solid var(--line); border-radius:8px; padding:6px 8px; backdrop-filter:blur(10px); align-items:center; }
+  #matchbar span { color:var(--dim); font-size:11px; max-width:280px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #matchbar button { border:0; background:#ffffff10; color:var(--txt); border-radius:6px; width:24px; height:24px; cursor:pointer; }
+</style>
+</head>
+<body>
+<canvas id="map"></canvas>
+<canvas id="glcv"></canvas>
+
+<header>
+  <div class="brand">
+    <h1>Embedding Atlas</h1>
+    <div class="sub"><span id="stat">…</span> artworks + <span id="statw">…</span> words · one space from <b>EmbeddingGemma&nbsp;2</b> · images: Google Arts &amp; Culture t-SNE Map</div>
+  </div>
+  <div class="controls">
+    <input id="searchbox" placeholder="search words or titles…" spellcheck="false">
+    <div class="seg" id="layoutseg">
+      <button data-l="gemma" class="on">Gemma&nbsp;2 space</button>
+      <button data-l="orig">Original t-SNE</button>
+    </div>
+    <button class="btn3d" id="btn3d">Wave field</button>
+  </div>
+</header>
+
+<div id="tip"></div>
+<div id="panel"><div class="inner"></div><button class="close" onclick="document.getElementById('panel').classList.remove('open')">✕</button></div>
+<div class="hint"><b>drag</b> pan · <b>scroll</b> zoom · hover artworks · in wave field: drag to orbit</div>
+<div id="matchbar"><span id="matchtxt"></span><button id="mprev">‹</button><button id="mnext">›</button></div>
+<div id="loader"><div class="ring"></div><div>loading embeddings…</div></div>
+
+<script>
+"use strict";
+const WORLD = 10000;
+let D = null, atlases = [];
+let mode = "2d";                 // 2d | 3d
+let mixT = 1, mixFrom = 1, mixTo = 1, mixT0 = 0;  // 0 = original map, 1 = gemma space
+let cam = { x: WORLD/2, y: WORLD/2, z: 0.55 };
+const view = { w: 0, h: 0, dpr: 1 };
+const canvas = document.getElementById("map");
+const glcv = document.getElementById("glcv");
+const ctx = canvas.getContext("2d");
+const $ = id => document.getElementById(id);
+const esc = s => (s||"").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+const imgURL = (mid, w) => `https://lh4.ggpht.com/${mid}=w${w}`;
+const ease = u => u < .5 ? 4*u*u*u : 1 - Math.pow(-2*u+2, 3)/2;
+// the surface that receives pointer events in the current mode
+const surface = () => mode === "2d" ? canvas : glcv;
+
+async function boot() {
+  const r = await fetch("data.json");
+  if (!r.ok) { $("loader").innerHTML = "<div>data.json not found — run project.py first</div>"; return; }
+  D = await r.json();
+  $("stat").textContent = D.n; $("statw").textContent = D.words.length;
+  await Promise.all(Array.from({ length: D.pages }, (_, pg) => new Promise(res => {
+    const im = new Image();
+    im.onload = () => { atlases[pg] = im; res(); };
+    im.onerror = res;
+    im.src = `atlas${pg}.jpg`;
+  })));
+  const L = $("loader"); L.style.opacity = 0; setTimeout(() => L.remove(), 550);
+  resize();
+  // frame the [0,1]² point cloud with margin
+  cam.z = Math.min(view.w, view.h) * 0.78 / WORLD;
+  cam.x = WORLD/2; cam.y = WORLD/2;
+  requestAnimationFrame(frame);
+}
+
+/* ---------- positions ---------- */
+function itemPos(i, t) {          // t: 0=orig, 1=gemma
+  const it = D.items[i];
+  const gx = it.x * WORLD, gy = it.y * WORLD, ox = it.ox * WORLD, oy = it.oy * WORLD;
+  return [ ox + (gx-ox)*t, oy + (gy-oy)*t ];
+}
+function wordPos(j) { return [D.wplain[j][0] * WORLD, D.wplain[j][1] * WORLD]; }
+
+/* ---------- camera ---------- */
+function resize() {
+  view.dpr = Math.min(devicePixelRatio || 1, 2);
+  view.w = innerWidth; view.h = innerHeight;
+  for (const cv of [canvas, glcv]) {
+    cv.width = view.w * view.dpr; cv.height = view.h * view.dpr;
+    cv.style.width = view.w + "px"; cv.style.height = view.h + "px";
+  }
+  if (mode === "3d" && glr.gl) glr.viewport();
+}
+addEventListener("resize", resize);
+const screenToWorld = (px, py) => [ (px - view.w/2)/cam.z + cam.x, (py - view.h/2)/cam.z + cam.y ];
+for (const cv of [canvas, glcv]) {
+  cv.addEventListener("wheel", e => {
+    e.preventDefault();
+    if (mode === "3d") { glr.orbit.tr = Math.min(42000, Math.max(2500, glr.orbit.tr * Math.exp(e.deltaY * 0.0012))); return; }
+    const [wx, wy] = screenToWorld(e.clientX, e.clientY);
+    cam.z = Math.min(14, Math.max(0.012, cam.z * Math.exp(-e.deltaY * 0.0012)));
+    cam.x = wx - (e.clientX - view.w/2) / cam.z;
+    cam.y = wy - (e.clientY - view.h/2) / cam.z;
+  }, { passive: false });
+}
+let drag = null;
+for (const cv of [canvas, glcv]) {
+  cv.addEventListener("pointerdown", e => {
+    drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, th: glr.orbit.theta, ph: glr.orbit.phi, moved: false };
+    cv.classList.add("dragging"); cv.setPointerCapture(e.pointerId);
+  });
+  cv.addEventListener("pointermove", e => {
+    if (drag) {
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (Math.abs(dx)+Math.abs(dy) > 3) drag.moved = true;
+      if (mode === "2d") { cam.x = drag.cx - dx/cam.z; cam.y = drag.cy - dy/cam.z; }
+      else { glr.orbit.theta = drag.th - dx*0.005; glr.orbit.phi = Math.max(0.12, Math.min(1.42, drag.ph + dy*0.004)); }
+    } else if (mode === "2d") hover(e.clientX, e.clientY);
+  });
+  cv.addEventListener("pointerup", e => {
+    if (drag && !drag.moved && mode === "2d") click(e.clientX, e.clientY);
+    drag = null; cv.classList.remove("dragging");
+  });
+  cv.addEventListener("pointerleave", () => { $("tip").style.display = "none"; hovered = -1; });
+}
+
+/* ---------- 2D ---------- */
+let hovered = -1, selected = -1, searchQ = "";
+const thumbPx = 46;
+
+function frame(ts) {
+  const u = Math.min(1, (ts - mixT0)/950);
+  mixT = mixFrom + (mixTo - mixFrom) * ease(u);
+  if (mode === "2d") draw2D(); else glr.draw(ts);
+  requestAnimationFrame(frame);
+}
+function draw2D() {
+  const t = mixT;
+  ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+  ctx.fillStyle = "#0b0d10"; ctx.fillRect(0, 0, view.w, view.h);
+
+  const step = 2500 * cam.z;
+  if (step > 42 && step < 900) {
+    ctx.strokeStyle = "#ffffff05"; ctx.lineWidth = 1; ctx.beginPath();
+    for (let x = (view.w/2 - cam.x*cam.z) % step; x < view.w; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, view.h); }
+    for (let y = (view.h/2 - cam.y*cam.z) % step; y < view.h; y += step) { ctx.moveTo(0, y); ctx.lineTo(view.w, y); }
+    ctx.stroke();
+  }
+
+  const size = thumbPx * cam.z, showThumbs = size >= 13 && atlases.length === D.pages;
+  const dotR = Math.max(1.1, Math.min(5, size * 0.16));
+  for (let i = 0; i < D.n; i++) {
+    const [wx, wy] = itemPos(i, t);
+    const sx = (wx - cam.x)*cam.z + view.w/2, sy = (wy - cam.y)*cam.z + view.h/2;
+    if (sx < -90 || sy < -90 || sx > view.w+90 || sy > view.h+90) continue;
+    const it = D.items[i];
+    ctx.globalAlpha = (searchQ && !it._hit) ? 0.10 : 1;
+    if (showThumbs) {
+      const gx = (it.k % D.grid) * D.cell, gy = ((it.k / D.grid)|0) * D.cell;
+      const sel = (i === hovered || i === selected);
+      if (sel) { ctx.fillStyle = "#8ab4ff"; ctx.fillRect(sx-size/2-2.5, sy-size/2-2.5, size+5, size+5); }
+      ctx.drawImage(atlases[it.pg], gx, gy, D.cell, D.cell, sx-size/2, sy-size/2, size, size);
+    } else {
+      ctx.fillStyle = it.col;
+      ctx.beginPath(); ctx.arc(sx, sy, dotR, 0, 7); ctx.fill();
+      if (i === hovered || i === selected) { ctx.strokeStyle = "#8ab4ff"; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(sx, sy, dotR+4, 0, 7); ctx.stroke(); }
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  // word labels — visible only in gemma space (fade with mixT)
+  if (t > 0.03 && layoutIsGemma()) {
+    ctx.globalAlpha = t;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (let j = 0; j < D.words.length; j++) {
+      const [wx, wy] = wordPos(j);
+      const sx = (wx - cam.x)*cam.z + view.w/2, sy = (wy - cam.y)*cam.z + view.h/2;
+      if (sx < -160 || sy < -40 || sx > view.w+160 || sy > view.h+40) continue;
+      const w = D.words[j], isHit = searchQ && w.toLowerCase().includes(searchQ);
+      const fs = Math.min(17, Math.max(10.5, 11 + cam.z*0.9));
+      ctx.font = `${isHit?"700":"500"} ${fs}px -apple-system, Inter, sans-serif`;
+      ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(8,10,13,.85)";
+      ctx.strokeText(w, sx, sy);
+      ctx.fillStyle = isHit ? "#ffd479" : "#c9d4e8";
+      ctx.fillText(w, sx, sy);
+      if (isHit) { const tw = ctx.measureText(w).width;
+        ctx.strokeStyle = "#ffd47977"; ctx.lineWidth = 1;
+        ctx.strokeRect(sx-tw/2-6, sy-fs*0.72, tw+12, fs*1.44); }
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+const layoutIsGemma = () => mixTo === 1;
+function setLayout(l) {
+  const target = l === "gemma" ? 1 : 0;
+  if (target === mixTo) return;
+  mixTo = target; mixFrom = mixT; mixT0 = performance.now();
+  if (mode === "3d") { mixT = mixTo; mixFrom = mixTo; glr.build(); } // snap in 3D (heights differ)
+}
+
+/* ---------- hover / click ---------- */
+function pickAt(px, py) {
+  let best = -1, bd = 1e9;
+  const rad = Math.max(14, thumbPx * cam.z * 0.6);
+  for (let i = 0; i < D.n; i++) {
+    const [wx, wy] = itemPos(i, mixT);
+    const dx = (wx - cam.x)*cam.z + view.w/2 - px, dy = (wy - cam.y)*cam.z + view.h/2 - py;
+    const d = dx*dx + dy*dy;
+    if (d < rad*rad && d < bd) { bd = d; best = i; }
+  }
+  return best;
+}
+function hover(px, py) {
+  const i = pickAt(px, py);
+  hovered = i;
+  const tip = $("tip");
+  if (i < 0) { tip.style.display = "none"; return; }
+  const it = D.items[i];
+  if (tip.dataset.for !== it.id) {
+    tip.dataset.for = it.id;
+    tip.innerHTML = `<img class="th" src="${imgURL(it.id, 400)}" crossorigin="anonymous">
+      <div class="tt">${esc(it.t || "Untitled")}</div>
+      <div class="tm">${esc(it.c || "unknown creator")} · ${esc(it.p)}</div>
+      <div class="chips">${it.bw.map(wi => `<span class="chip">${esc(D.words[wi])}</span>`).join("")}</div>`;
+  }
+  tip.style.display = "block";
+  const [wx, wy] = itemPos(i, mixT);
+  const sx = (wx - cam.x)*cam.z + view.w/2, sy = (wy - cam.y)*cam.z + view.h/2;
+  tip.style.left = Math.min(view.w - 246, sx + 16) + "px";
+  tip.style.top = Math.max(8, Math.min(view.h - 240, sy - 50)) + "px";
+}
+function click(px, py) {
+  const i = pickAt(px, py);
+  if (i >= 0) openPanel(i); else $("panel").classList.remove("open");
+}
+function openPanel(i) {
+  selected = i;
+  const it = D.items[i];
+  document.querySelector("#panel .inner").innerHTML = `
+    <img class="hero" src="${imgURL(it.id, 720)}" crossorigin="anonymous">
+    <h2>${esc(it.t || "Untitled")}</h2>
+    <div class="meta">${esc(it.c || "unknown creator")}</div>
+    <div class="meta">${esc(it.p)}</div>
+    <div class="sec">nearest words in embedding space</div>
+    <div class="chips">${it.bw.map(wi => `<span class="chip" data-word="${esc(D.words[wi])}">${esc(D.words[wi])}</span>`).join("")}</div>
+    <div class="sec">similar artworks</div>
+    ${it.nn.map(j => `<div class="sim" data-i="${j}">
+        <img src="${imgURL(D.items[j].id, 120)}" crossorigin="anonymous">
+        <div class="st">${esc(D.items[j].t || "Untitled")}<em>${esc(D.items[j].c || "")}</em></div></div>`).join("")}
+    <div class="sec">links</div>
+    <a class="plain" href="https://www.google.com/culturalinstitute/asset-viewer/${encodeURIComponent(it.id)}" target="_blank">open on Google Arts & Culture ↗</a>
+    <a class="plain" href="https://artsexperiments.withgoogle.com/tsnemap/" target="_blank">original t-SNE Map ↗</a>`;
+  document.querySelectorAll("#panel .sim").forEach(el => el.onclick = () => { openPanel(+el.dataset.i); flyTo(+el.dataset.i); });
+  document.querySelectorAll("#panel .chip").forEach(el => el.onclick = () => { search(el.dataset.word); $("searchbox").value = el.dataset.word; });
+  $("panel").classList.add("open");
+}
+function flyTo(i) {
+  const [wx, wy] = itemPos(i, mixT);
+  const a = { t: 0, fx: cam.x, fy: cam.y, fz: cam.z };
+  const step = () => {
+    a.t = Math.min(1, a.t + 0.045); const u = ease(a.t);
+    cam.x = a.fx + (wx-a.fx)*u; cam.y = a.fy + (wy-a.fy)*u;
+    cam.z = a.fz + (Math.max(a.fz, 2.0) - a.fz)*u;
+    if (a.t < 1) requestAnimationFrame(step);
+  };
+  step();
+}
+
+/* ---------- search ---------- */
+let matches = [], matchI = 0;
+$("searchbox").addEventListener("input", e => search(e.target.value.trim().toLowerCase()));
+function search(q) {
+  searchQ = q; matches = [];
+  if (!q) { $("matchbar").style.display = "none"; D.items.forEach(it => it._hit = false); return; }
+  if (mode === "3d") { exit3D(); }
+  if (!layoutIsGemma()) setLayout("gemma");
+  document.querySelector('#layoutseg [data-l="gemma"]').classList.add("on");
+  document.querySelector('#layoutseg [data-l="orig"]').classList.remove("on");
+  D.words.forEach((w, j) => { if (w.toLowerCase().includes(q)) matches.push(["w", j]); });
+  D.items.forEach((it, i) => {
+    const hit = (it.t||"").toLowerCase().includes(q) || (it.c||"").toLowerCase().includes(q);
+    it._hit = hit; if (hit) matches.push(["i", i]);
+  });
+  matchI = 0;
+  $("matchbar").style.display = matches.length ? "flex" : "none";
+  if (matches.length) gotoMatch(0); else $("matchtxt").textContent = "no matches";
+}
+function gotoMatch(k) {
+  if (!matches.length) return;
+  matchI = ((k % matches.length) + matches.length) % matches.length;
+  const [kind, idx] = matches[matchI];
+  $("matchtxt").textContent = `${matchI+1}/${matches.length} — ${kind === "w" ? "“"+D.words[idx]+"”" : (D.items[idx].t || "Untitled")}`;
+  if (kind === "w") {
+    const [wx, wy] = wordPos(idx);
+    cam.x = wx; cam.y = wy; if (cam.z < 1.2) cam.z = 1.6;
+  } else flyTo(idx);
+}
+$("mnext").onclick = () => gotoMatch(matchI + 1);
+$("mprev").onclick = () => gotoMatch(matchI - 1);
+addEventListener("keydown", e => { if (e.key === "Escape") { $("panel").classList.remove("open"); search(""); $("searchbox").value = ""; } });
+document.querySelectorAll("#layoutseg button").forEach(b => b.onclick = () => {
+  if (mode === "3d") exit3D();
+  document.querySelectorAll("#layoutseg button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); setLayout(b.dataset.l);
+});
+
+/* ---------- wave field (WebGL) — replicates tsnemap's vertex shader:
+     p.xz *= 1 + amp;  p.y += (sin(t + x/1800) - sin(t + z/1600)) * amp * 500  ---------- */
+const glr = {
+  gl: null, prog: null, orbit: { theta: -0.4, phi: 0.55, r: 16000, ttheta: -0.4, tphi: 0.55, tr: 16000 },
+  amp: 0, pages: [],
+  VS: `precision mediump float;
+    uniform float wavesOffset, wavesAmp; uniform mat4 proj, view;
+    attribute vec3 translate; attribute vec2 uvOffset; attribute vec2 quad; attribute float scale;
+    varying vec2 vUv;
+    void main() {
+      vec3 p = translate;
+      p.xz *= 1.0 + 1.0 * wavesAmp;
+      p.y += ( sin(wavesOffset + p.x/1800.0) - sin(wavesOffset + p.z/1600.0) ) * wavesAmp * 500.0;
+      vec4 mv = view * vec4(p, 1.0);
+      mv.xy += quad * scale;
+      vUv = uvOffset + (quad*0.5+0.5) * ${(1/6).toFixed(6)};
+      gl_Position = proj * mv;
+    }`,
+  FS: `precision mediump float; uniform sampler2D map; varying vec2 vUv;
+    void main() { vec4 c = texture2D(map, vUv); if (c.r+c.g+c.b < 0.085) discard; gl_FragColor = c; }`,
+  init() {
+    this.gl = glcv.getContext("webgl", { antialias: true });
+    const gl = this.gl;
+    if (!gl) return false;
+    const mk = (t, s) => { const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) { console.error(gl.getShaderInfoLog(sh)); } return sh; };
+    this.prog = gl.createProgram();
+    gl.attachShader(this.prog, mk(gl.VERTEX_SHADER, this.VS));
+    gl.attachShader(this.prog, mk(gl.FRAGMENT_SHADER, this.FS));
+    gl.linkProgram(this.prog); gl.useProgram(this.prog);
+    this.quadBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+    this.ext = gl.getExtension("ANGLE_instanced_arrays");
+    return !!this.ext;
+  },
+  viewport() { this.gl.viewport(0, 0, glcv.width, glcv.height); },
+  // density-based terrain height from current layout (mirrors their heightmap.png approach)
+  build() {
+    const gl = this.gl, N = D.n;
+    const pos = new Float32Array(N*2);
+    for (let i = 0; i < N; i++) {
+      const it = D.items[i];
+      pos[i*2] = (layoutIsGemma() ? it.x : it.ox) * WORLD - WORLD/2;
+      pos[i*2+1] = (layoutIsGemma() ? it.y : it.oy) * WORLD - WORLD/2;
+    }
+    const G = 96, dens = new Float32Array(G*G);
+    for (let i = 0; i < N; i++) {
+      const gx = Math.min(G-1, Math.max(0, (pos[i*2]+WORLD/2)/WORLD*G)|0);
+      const gz = Math.min(G-1, Math.max(0, (pos[i*2+1]+WORLD/2)/WORLD*G)|0);
+      dens[gz*G+gx] += 1;
+    }
+    const blur = new Float32Array(G*G), R = 7;
+    for (let y = 0; y < G; y++) for (let x = 0; x < G; x++) {
+      let s = 0, c = 0;
+      for (let dy = -R; dy <= R; dy += 2) for (let dx = -R; dx <= R; dx += 2) {
+        const xx = x+dx, yy = y+dy;
+        if (xx<0||yy<0||xx>=G||yy>=G) continue;
+        const w = 1/(1+Math.abs(dx)+Math.abs(dy));
+        s += dens[yy*G+xx]*w; c += w;
+      }
+      blur[y*G+x] = s/c;
+    }
+    const maxD = Math.max(...blur, 1e-9), H = 1500;
+    const height = i => {
+      const gx = Math.min(G-1, Math.max(0, (pos[i*2]+WORLD/2)/WORLD*G)|0);
+      const gz = Math.min(G-1, Math.max(0, (pos[i*2+1]+WORLD/2)/WORLD*G)|0);
+      return blur[gz*G+gx]/maxD * H;
+    };
+    // per-page geometry
+    this.pages.forEach(p => { gl.deleteBuffer(p.tr); gl.deleteBuffer(p.uv); gl.deleteBuffer(p.sc); gl.deleteTexture(p.tex); });
+    this.pages = [];
+    const byPage = Array.from({ length: D.pages }, () => []);
+    for (let i = 0; i < N; i++) byPage[D.items[i].pg].push(i);
+    for (let p = 0; p < D.pages; p++) {
+      const idxs = byPage[p], n = idxs.length;
+      if (!n) { this.pages.push(null); continue; }
+      const tr = new Float32Array(n*3), uv = new Float32Array(n*2), sc = new Float32Array(n);
+      for (let k = 0; k < n; k++) {
+        const i = idxs[k], it = D.items[i];
+        tr[k*3] = pos[i*2]; tr[k*3+1] = height(i); tr[k*3+2] = pos[i*2+1];
+        uv[k*2] = (it.k % D.grid)/D.grid; uv[k*2+1] = ((it.k/D.grid)|0)/D.grid;
+        sc[k] = WORLD * 0.008;
+      }
+      const mkBuf = (arr) => { const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, arr, gl.STATIC_DRAW); return b; };
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlases[p]);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this.pages.push({ n, tr: mkBuf(tr), uv: mkBuf(uv), sc: mkBuf(sc), tex });
+    }
+  },
+  mat4perspective(fov, asp, n, f) {
+    const t = 1/Math.tan(fov/2);
+    return new Float32Array([t/asp,0,0,0, 0,t,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0]);
+  },
+  mat4lookAt(e, c) {
+    let zx=e[0]-c[0], zy=e[1]-c[1], zz=e[2]-c[2];
+    const l = Math.hypot(zx,zy,zz)||1; zx/=l; zy/=l; zz/=l;
+    let xx=-zz, xy=0, xz=zx;
+    const l2 = Math.hypot(xx,xy,xz)||1; xx/=l2; xz/=l2;
+    const yx=zy*xz-zz*xy, yy=zz*xx-zx*xz, yz=zx*xy-zy*xx;
+    return new Float32Array([
+      xx,yx,zx,0, xy,yy,zy,0, xz,yz,zz,0,
+      -(xx*e[0]+xy*e[1]+xz*e[2]), -(yx*e[0]+yy*e[1]+yz*e[2]), -(zx*e[0]+zy*e[1]+zz*e[2]), 1]);
+  },
+  draw(ts) {
+    const gl = this.gl;
+    this.orbit.theta += (this.orbit.ttheta - this.orbit.theta)*0.1;
+    this.orbit.phi   += (this.orbit.tphi - this.orbit.phi)*0.1;
+    this.orbit.r     += (this.orbit.tr - this.orbit.r)*0.1;
+    this.amp += (0.85 - this.amp)*0.02;
+    gl.clearColor(0.043, 0.051, 0.063, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.useProgram(this.prog);
+    const ct = Math.cos(this.orbit.phi);
+    const eye = [Math.sin(this.orbit.theta)*ct*this.orbit.r, Math.sin(this.orbit.phi)*this.orbit.r, Math.cos(this.orbit.theta)*ct*this.orbit.r];
+    gl.uniformMatrix4fv(gl.getUniformLocation(this.prog, "proj"), false,
+      this.mat4perspective(0.9, glcv.width/glcv.height, 100, 120000));
+    gl.uniformMatrix4fv(gl.getUniformLocation(this.prog, "view"), false, this.mat4lookAt(eye, [0, 200, 0]));
+    gl.uniform1f(gl.getUniformLocation(this.prog, "wavesOffset"), ts * 0.0011);
+    gl.uniform1f(gl.getUniformLocation(this.prog, "wavesAmp"), this.amp);
+    const q = gl.getAttribLocation(this.prog, "quad");
+    const tloc = gl.getAttribLocation(this.prog, "translate");
+    const uloc = gl.getAttribLocation(this.prog, "uvOffset");
+    const sloc = gl.getAttribLocation(this.prog, "scale");
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuf);
+    gl.enableVertexAttribArray(q); gl.vertexAttribPointer(q, 2, gl.FLOAT, false, 0, 0);
+    gl.uniform1i(gl.getUniformLocation(this.prog, "map"), 0);
+    gl.activeTexture(gl.TEXTURE0);
+    const ext = this.ext;
+    for (const p of this.pages) {
+      if (!p) continue;
+      gl.bindTexture(gl.TEXTURE_2D, p.tex);
+      gl.bindBuffer(gl.ARRAY_BUFFER, p.tr);
+      gl.enableVertexAttribArray(tloc); gl.vertexAttribPointer(tloc, 3, gl.FLOAT, false, 0, 0);
+      ext.vertexAttribDivisorANGLE(tloc, 1);
+      gl.bindBuffer(gl.ARRAY_BUFFER, p.uv);
+      gl.enableVertexAttribArray(uloc); gl.vertexAttribPointer(uloc, 2, gl.FLOAT, false, 0, 0);
+      ext.vertexAttribDivisorANGLE(uloc, 1);
+      gl.bindBuffer(gl.ARRAY_BUFFER, p.sc);
+      gl.enableVertexAttribArray(sloc); gl.vertexAttribPointer(sloc, 1, gl.FLOAT, false, 0, 0);
+      ext.vertexAttribDivisorANGLE(sloc, 1);
+      ext.drawArraysInstancedANGLE(gl.TRIANGLE_STRIP, 0, 4, p.n);
+      ext.vertexAttribDivisorANGLE(tloc, 0); ext.vertexAttribDivisorANGLE(uloc, 0); ext.vertexAttribDivisorANGLE(sloc, 0);
+    }
+  }
+};
+function enter3D() {
+  if (!glr.gl && !glr.init()) { $("btn3d").textContent = "WebGL unavailable"; return; }
+  mode = "3d";
+  document.body.classList.add("gl");
+  $("btn3d").classList.add("on"); $("btn3d").textContent = "Exit wave field";
+  glr.build(); glr.viewport();
+  document.querySelector(".hint").innerHTML = "<b>drag</b> orbit · <b>scroll</b> dolly · the same sine-wave shader as the original t-SNE Map";
+}
+function exit3D() {
+  mode = "2d"; glr.amp = 0;
+  document.body.classList.remove("gl");
+  $("btn3d").classList.remove("on"); $("btn3d").textContent = "Wave field";
+  document.querySelector(".hint").innerHTML = "<b>drag</b> pan · <b>scroll</b> zoom · hover artworks · in wave field: drag to orbit";
+}
+$("btn3d").onclick = () => mode === "2d" ? enter3D() : exit3D();
+
+boot();
+</script>
+</body>
+</html>
