@@ -28,7 +28,7 @@ Open `tsnemap-embeddings/index.html` (any static server; it fetches `data.json` 
 |---|---|
 | `tsnemap-embeddings/` | the visualization + its data (`data.json`, `atlas*.jpg` sprite pages) |
 | `pipeline/` | full pipeline (see below) |
-| `data/` | working dir for the pipeline — downloaded thumbnails, raw bins, embeddings (ignored except small metadata) |
+| `data/` | pipeline working dir — metadata + `embeddings.npz` committed; heavy downloads (`thumbs/`, raw bins, bundle zip) ignored |
 
 ## Pipeline
 
@@ -37,6 +37,14 @@ uv venv --python 3.12 .venv && uv pip install -p .venv/bin/python -r requirement
 .venv/bin/python pipeline/build_dataset.py 2000   # parse tsnemap bins, sample, fetch metadata + thumbnails
 .venv/bin/python pipeline/embed.py                # EmbeddingGemma 2: 1,247 images + 145 words → 768d
 .venv/bin/python pipeline/project.py              # joint UMAP, thumbnail atlas, data.json
+```
+
+**Skipping the downloads:** a prebuilt bundle (`tsnemap-sample.zip`, ~57 MB — thumbnails,
+metadata, and embeddings) can be served from any static host and restored in one request:
+
+```bash
+.venv/bin/python pipeline/build_dataset.py --from-zip https://<host>/tsnemap-sample.zip
+# or: EMB_SAMPLE_ZIP=<url> / a local path both work; subsequent runs reuse data/ as-is
 ```
 
 1. **build_dataset.py** — reverse-engineers the t-SNE Map data format:

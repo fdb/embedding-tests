@@ -21,3 +21,5 @@ __pycache__/
 data/thumbs/
 data/atlas*.bin
 data/tsne.bin
+data/_sample.zip
+*.zip

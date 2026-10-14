@@ -8,16 +8,30 @@ Data sources (reverse-engineered from the site's JS):
   - https://artsexperiments.withgoogle.com/freefall/data/tsne.bin
       int16 (LE) triples: tsne_x, tsne_y, tsne_z per asset, in atlas order
   - https://artsexperiments.withgoogle.com/freefall/api/items/<MID>  -> title/creator/partner/image_url
+
+A prebuilt bundle (thumbnails + metadata + embeddings) can be served from any static host;
+restore it with --from-zip <url|path> in a single download instead of ~2,500 requests.
+The bundle, thumbs/ and raw bins stay out of git (see .gitignore).
 """
-import json, os, struct, sys, time, urllib.request, concurrent.futures as cf
+import json, os, re, struct, sys, time, urllib.request, zipfile, concurrent.futures as cf
 
 BASE = "https://artsexperiments.withgoogle.com"
 ATLAS_API = "https://storage.googleapis.com/ct_static/data/2016-10-21/atlas"
 OUT = os.environ.get("EMB_DATA_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
 OUT = os.path.abspath(OUT)
 os.makedirs(OUT, exist_ok=True)
-TARGET_SAMPLE = int(sys.argv[1]) if len(sys.argv) > 1 else 1500
 IMG_SIZE = 400
+
+import argparse
+ap = argparse.ArgumentParser(description="Build the tsnemap sample dataset. "
+    "By default samples + fetches from Google; --from-zip restores a prebuilt bundle in one download.")
+ap.add_argument("target", nargs="?", type=int, default=1500, help="target sample size (Google fetch mode)")
+ap.add_argument("--from-zip", default=os.environ.get("EMB_SAMPLE_ZIP"),
+                help="path or URL to a bundle zip (thumbs/, items_raw.json, ...) — skips Google entirely")
+ap.add_argument("--fresh", action="store_true", help="re-download images even if present on disk")
+args = ap.parse_args()
+TARGET_SAMPLE = args.target
+
 
 def fetch(url, binary=False, tries=3):
     for t in range(tries):
@@ -30,6 +44,43 @@ def fetch(url, binary=False, tries=3):
                 print(f"  ! failed {url[:90]}: {e}")
                 return None
             time.sleep(1.5 * (t + 1))
+
+
+# ---- 0. prebuilt bundle: one download instead of ~2,500 Google requests ----
+if args.from_zip:
+    zp = args.from_zip
+    if re.match(r"^https?://", zp):
+        t0 = time.time()
+        print(f"downloading bundle from {zp} …")
+        data = fetch(zp, binary=True, tries=2)
+        assert data, "bundle download failed"
+        zp = os.path.join(OUT, "_sample.zip")
+        open(zp, "wb").write(data)
+        print(f"  {len(data)/1e6:.1f} MB in {time.time()-t0:.0f}s")
+    with zipfile.ZipFile(zp) as z:
+        z.extractall(OUT)
+    items = json.load(open(f"{OUT}/items_raw.json"))
+    # prune thumbnails not referenced by items_raw.json (stale files from earlier runs)
+    keep = {it["id"] + ".jpg" for it in items}
+    tdir = f"{OUT}/thumbs"
+    if os.path.isdir(tdir):
+        stale = [f for f in os.listdir(tdir) if f.endswith(".jpg") and f not in keep]
+        for f in stale:
+            os.remove(os.path.join(tdir, f))
+    nth = len([f for f in os.listdir(tdir) if f.endswith(".jpg")]) if os.path.isdir(tdir) else 0
+    print(f"bundle restored: {len(items)} items, {nth} thumbnails -> {OUT}")
+    sys.exit(0)
+
+TARGET_SAMPLE = args.target
+
+# ---- 0b. already-built local data: reuse unless --fresh ----
+if not args.fresh and os.path.exists(f"{OUT}/items_raw.json") and os.path.isdir(f"{OUT}/thumbs"):
+    items = json.load(open(f"{OUT}/items_raw.json"))
+    nth = len([f for f in os.listdir(f"{OUT}/thumbs") if f.endswith(".jpg")])
+    if len(items) == nth:
+        print(f"reusing existing data in {OUT}: {len(items)} items with thumbnails (use --fresh to rebuild)")
+        sys.exit(0)
+    print(f"partial data in {OUT} ({nth}/{len(items)} thumbnails) — rebuilding from Google")
 
 # ---- 1. atlas bins: MIDs in order + sprite positions in the map texture ----
 mids, sprites = [], []
@@ -92,9 +143,10 @@ with cf.ThreadPoolExecutor(8) as ex:
 print(f"metadata ok for {len(items)}")
 
 os.makedirs(f"{OUT}/thumbs", exist_ok=True)
+have = set(os.listdir(f"{OUT}/thumbs")) if os.path.isdir(f"{OUT}/thumbs") else set()
 def dl(it):
     p = f"{OUT}/thumbs/{it['id']}.jpg"
-    if os.path.exists(p) and os.path.getsize(p) > 500:
+    if not args.fresh and it["id"] + ".jpg" in have and os.path.getsize(p) > 500:
         return it["id"]
     u = it["url"]
     if not u.startswith("http"):
